@@ -7,21 +7,10 @@ import streamlit as st
 from gtts import gTTS
 from openai import APIConnectionError, AuthenticationError, OpenAI, RateLimitError
 
-# ---------------------------------------------------------------
-# OpenAI 설정 (API 키를 아래에 직접 입력하세요)
-# ⚠️ 키가 노출되므로 이 파일을 GitHub 등에 공개하지 마세요.
-# ---------------------------------------------------------------
-OPENAI_API_KEY = "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"
-
+# API 키는 코드에 넣지 않고, 화면 왼쪽 위(사이드바)에서 입력받습니다.
 STT_MODEL = "whisper-1"  # 또는 "gpt-4o-mini-transcribe", "gpt-4o-transcribe"
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
 st.set_page_config(page_title="말하며 배우는 영어 단어", page_icon="🎤", layout="centered")
-
-if OPENAI_API_KEY.startswith("sk-여기에"):
-    st.error("코드 상단의 OPENAI_API_KEY에 본인의 OpenAI API 키를 입력해 주세요.")
-    st.stop()
 
 # ---------------------------------------------------------------
 # 기본 단어장 (영어, 한글 뜻)
@@ -63,8 +52,9 @@ class NoSpeechError(Exception):
     """음성이 인식되지 않았을 때 발생."""
 
 
-def recognize(audio_file) -> str:
+def recognize(audio_file, api_key: str) -> str:
     """st.audio_input 의 WAV 데이터를 OpenAI 음성 인식 API로 텍스트 변환."""
+    client = OpenAI(api_key=api_key)
     audio_file.seek(0)
     result = client.audio.transcriptions.create(
         model=STT_MODEL,
@@ -132,6 +122,26 @@ ss = st.session_state
 # 사이드바
 # ---------------------------------------------------------------
 with st.sidebar:
+    st.header("🔑 OpenAI API 키")
+    api_key_input = st.text_input(
+        "API Key",
+        type="password",
+        placeholder="sk-...",
+        help="입력한 키는 이 브라우저 세션에서만 사용되며 서버에 저장되지 않습니다.",
+        label_visibility="collapsed",
+    )
+    api_key = api_key_input.strip()
+    if not api_key:  # 배포 환경의 Secrets에 키가 있으면 대체 사용 (선택 사항)
+        try:
+            api_key = st.secrets["OPENAI_API_KEY"]
+        except Exception:
+            api_key = ""
+    if api_key:
+        st.caption("✅ API 키가 설정되었습니다.")
+    else:
+        st.caption("⚠️ API 키를 입력해야 음성 인식을 쓸 수 있어요.")
+
+    st.divider()
     st.header("⚙️ 설정")
     mode = st.radio("학습 모드", ["🗣️ 발음 연습", "🧠 뜻 보고 말하기"])
 
@@ -181,19 +191,24 @@ else:
     st.markdown(f"## {ko}")
     st.write("이 뜻에 해당하는 영어 단어는? 🤔")
 
+if not api_key:
+    st.info("👈 왼쪽 위 사이드바에 OpenAI API 키를 입력하면 녹음 기능이 활성화됩니다.\n\n"
+            "모바일에서는 왼쪽 위의 **>** 아이콘을 눌러 사이드바를 열어 주세요.")
+    st.stop()
+
 recording = st.audio_input("🎙️ 버튼을 눌러 녹음하고, 다시 눌러 종료하세요", key=f"audio_{mode}_{ss.q}")
 
 # 녹음이 들어오고 아직 채점하지 않았다면 채점
 if recording is not None and ss.result is None:
     with st.spinner("음성을 인식하는 중..."):
         try:
-            transcript = recognize(recording)
+            transcript = recognize(recording, api_key)
             score = similarity(en, transcript)
             ss.result = {"transcript": transcript, "score": score, "ok": score >= PASS_SCORE}
         except NoSpeechError:
             ss.result = {"transcript": "", "score": 0.0, "ok": False, "error": "음성을 알아듣지 못했어요. 더 또렷하게 다시 말해 보세요."}
         except AuthenticationError:
-            ss.result = {"transcript": "", "score": 0.0, "ok": False, "error": "OpenAI API 키가 올바르지 않습니다. 코드의 OPENAI_API_KEY를 확인하세요.", "no_count": True}
+            ss.result = {"transcript": "", "score": 0.0, "ok": False, "error": "OpenAI API 키가 올바르지 않습니다. 왼쪽 위 사이드바의 키를 다시 확인해 주세요.", "no_count": True}
         except RateLimitError:
             ss.result = {"transcript": "", "score": 0.0, "ok": False, "error": "API 사용 한도를 초과했거나 크레딧이 부족합니다. OpenAI 계정을 확인하세요.", "no_count": True}
         except APIConnectionError:
